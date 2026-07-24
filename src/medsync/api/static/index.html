@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MedSync Diagnostic Dashboard</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; }
+  .sub { color: #666; margin-top: -8px; }
+  #drop { border: 2px dashed #aaa; border-radius: 8px; padding: 32px; text-align: center; cursor: pointer; }
+  #drop.drag { border-color: #2563eb; background: #eff6ff; }
+  #preview { max-width: 100%; margin-top: 16px; border-radius: 8px; display: none; }
+  table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+  .bar { background: #2563eb; height: 8px; border-radius: 4px; }
+  .barbg { background: #eee; border-radius: 4px; width: 100%; }
+  #meta { color: #666; font-size: 0.85rem; margin-top: 12px; }
+  #err { color: #c00; margin-top: 12px; }
+</style>
+</head>
+<body>
+  <h1>MedSync Diagnostic Dashboard</h1>
+  <p class="sub">Upload a chest X-ray to query the current federated global model.</p>
+
+  <div id="drop">
+    <input type="file" id="file" accept="image/png,image/jpeg" style="display:none">
+    <span>Click or drop a JPEG/PNG chest X-ray here</span>
+  </div>
+  <img id="preview">
+  <div id="err"></div>
+  <table id="results" style="display:none">
+    <thead><tr><th>Finding</th><th>Probability</th><th></th></tr></thead>
+    <tbody id="results-body"></tbody>
+  </table>
+  <div id="meta"></div>
+
+<script>
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+const preview = document.getElementById('preview');
+const err = document.getElementById('err');
+const resultsTable = document.getElementById('results');
+const resultsBody = document.getElementById('results-body');
+const meta = document.getElementById('meta');
+
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+drop.addEventListener('drop', e => {
+  e.preventDefault();
+  drop.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', () => {
+  if (fileInput.files.length) handleFile(fileInput.files[0]);
+});
+
+async function handleFile(file) {
+  err.textContent = '';
+  resultsTable.style.display = 'none';
+  meta.textContent = '';
+
+  preview.src = URL.createObjectURL(file);
+  preview.style.display = 'block';
+
+  const formData = new FormData();
+  formData.append('file', file);
+
+  try {
+    const resp = await fetch('/predict', { method: 'POST', body: formData });
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Request failed (${resp.status})`);
+    }
+    const data = await resp.json();
+    renderResults(data);
+  } catch (e) {
+    err.textContent = e.message;
+  }
+}
+
+function renderResults(data) {
+  resultsBody.innerHTML = '';
+  for (const [label, prob] of Object.entries(data.findings)) {
+    const tr = document.createElement('tr');
+    const pct = Math.round(prob * 100);
+    tr.innerHTML = `
+      <td>${label.replaceAll('_', ' ')}</td>
+      <td>${pct}%</td>
+      <td><div class="barbg"><div class="bar" style="width:${pct}%"></div></div></td>
+    `;
+    resultsBody.appendChild(tr);
+  }
+  resultsTable.style.display = 'table';
+  meta.textContent = `Inference time: ${data.inference_ms} ms`;
+}
+</script>
+</body>
+</html>

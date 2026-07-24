@@ -11,6 +11,8 @@ from pathlib import Path
 
 import torch
 from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
@@ -18,7 +20,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from medsync.models.chexnet import build_chexnet  # noqa: E402
 from medsync.data.dataset import LABEL_NAMES, build_transform  # noqa: E402
 
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+
 app = FastAPI(title="MedSync Diagnostic API", version="0.1.0")
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.get("/")
+def dashboard():
+    return FileResponse(STATIC_DIR / "index.html")
 
 MODEL_PATH = Path("global_model_final.pth")
 _device = "cuda" if torch.cuda.is_available() else "cpu"

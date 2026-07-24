@@ -31,7 +31,9 @@ def main():
     parser.add_argument("--local-epochs", type=int, default=1)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=1e-4)
-    parser.add_argument("--noise-multiplier", type=float, default=1.0)
+    parser.add_argument("--target-epsilon", type=float, default=1.0,
+                         help="Per-round DP budget; noise multiplier is auto-calibrated to hit this")
+    parser.add_argument("--target-delta", type=float, default=1e-5)
     parser.add_argument("--max-grad-norm", type=float, default=1.2)
     parser.add_argument("--val-split", type=float, default=0.15,
                          help="Fraction of each node's data held out for the global eval set")
@@ -54,7 +56,8 @@ def main():
         held_out_datasets.append(val_ds)
         clients.append(LocalClient(
             node_id=node_id, dataset=train_ds, batch_size=args.batch_size,
-            lr=args.lr, noise_multiplier=args.noise_multiplier,
+            lr=args.lr, target_epsilon=args.target_epsilon,
+            target_delta=args.target_delta,
             max_grad_norm=args.max_grad_norm, device=args.device,
         ))
         print(f"node_{node_id}: {n_train} train / {n_val} held-out eval images")
