@@ -8,7 +8,6 @@ we only need a few thousand images to get a real, measurable signal.
 """
 import argparse
 import csv
-import os
 from pathlib import Path
 
 from datasets import load_dataset
@@ -43,34 +42,36 @@ def main():
         trust_remote_code=True,
     )
 
-    rows = []
-    n_written = 0
-    for i, example in enumerate(ds):
-        if n_written >= args.num_images:
-            break
-        image: Image.Image = example["image"]
-        labels = example["labels"]  # list of int label indices
-
-        fname = f"img_{n_written:06d}.jpg"
-        image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE)).save(
-            img_dir / fname, quality=90
-        )
-
-        multi_hot = [0] * len(LABEL_NAMES)
-        for lbl in labels:
-            if 0 <= lbl < len(LABEL_NAMES):
-                multi_hot[lbl] = 1
-        rows.append([fname] + multi_hot)
-        n_written += 1
-
-        if n_written % 250 == 0:
-            print(f"  ... {n_written}/{args.num_images} images saved")
-
+    # Written incrementally (not buffered until the end) so an interrupted
+    # streaming run -- these can take a long time over a slow remote archive
+    # -- still leaves a usable, complete labels.csv for whatever finished.
     csv_path = out_dir / "labels.csv"
+    n_written = 0
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow(["filename"] + LABEL_NAMES)
-        writer.writerows(rows)
+
+        for example in ds:
+            if n_written >= args.num_images:
+                break
+            image: Image.Image = example["image"]
+            labels = example["labels"]  # list of int label indices
+
+            fname = f"img_{n_written:06d}.jpg"
+            image.convert("RGB").resize((IMAGE_SIZE, IMAGE_SIZE)).save(
+                img_dir / fname, quality=90
+            )
+
+            multi_hot = [0] * len(LABEL_NAMES)
+            for lbl in labels:
+                if 0 <= lbl < len(LABEL_NAMES):
+                    multi_hot[lbl] = 1
+            writer.writerow([fname] + multi_hot)
+            f.flush()
+            n_written += 1
+
+            if n_written % 50 == 0:
+                print(f"  ... {n_written}/{args.num_images} images saved", flush=True)
 
     print(f"Done. {n_written} images -> {img_dir}")
     print(f"Labels -> {csv_path}")
