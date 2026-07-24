@@ -1,0 +1,29 @@
+version: "3.8"
+
+services:
+  mlflow:
+    image: python:3.11-slim
+    working_dir: /mlflow
+    command: >
+      bash -c "pip install --no-cache-dir mlflow==2.16.2 &&
+               mlflow server --host 0.0.0.0 --port 5000
+               --backend-store-uri /mlflow/runs
+               --default-artifact-root /mlflow/artifacts"
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./mlruns:/mlflow/runs
+      - ./mlartifacts:/mlflow/artifacts
+
+  hospital-node:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.node
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./global_model_final.pth:/app/global_model_final.pth:ro
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+    depends_on:
+      - mlflow

@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+data/raw/
+data/partitions/
+mlruns/
+*.pth
+*.ckpt
+.env
+.ipynb_checkpoints/
+*.log
