@@ -33,7 +33,10 @@ class LocalClient:
         self.device = device
 
     def train_round(self, model: nn.Module, local_epochs: int = 1):
-        model = model.to(self.device)
+        # Must be in train() mode *before* make_private() -- Opacus validates
+        # this on the incoming module, and the global model arrives here in
+        # eval() mode after the previous round's evaluate_model() call.
+        model = model.to(self.device).train()
         loader = DataLoader(self.dataset, batch_size=self.batch_size, shuffle=True)
         optimizer = torch.optim.Adam(model.parameters(), lr=self.lr)
         criterion = nn.BCEWithLogitsLoss()
