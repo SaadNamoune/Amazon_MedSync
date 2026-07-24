@@ -75,7 +75,6 @@ def main():
 
             for client in clients:
                 local_model = copy.deepcopy(global_model)
-                local_model.load_state_dict(global_model.state_dict())
                 state_dict, n_samples, epsilon, avg_loss = client.train_round(
                     local_model, local_epochs=args.local_epochs
                 )

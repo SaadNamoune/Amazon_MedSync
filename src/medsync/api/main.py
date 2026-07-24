@@ -21,6 +21,10 @@ from medsync.models.chexnet import build_chexnet  # noqa: E402
 from medsync.data.dataset import LABEL_NAMES, build_transform  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
+MODEL_PATH = Path("global_model_final.pth")
+_device = "cuda" if torch.cuda.is_available() else "cpu"
+_transform = build_transform(train=False)
+_model = None
 
 app = FastAPI(title="MedSync Diagnostic API", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
@@ -29,11 +33,6 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/")
 def dashboard():
     return FileResponse(STATIC_DIR / "index.html")
-
-MODEL_PATH = Path("global_model_final.pth")
-_device = "cuda" if torch.cuda.is_available() else "cpu"
-_transform = build_transform(train=False)
-_model = None
 
 
 def get_model():
