@@ -7,6 +7,8 @@ main.py's clinician-facing single-image prediction endpoint.
 import csv
 from pathlib import Path
 
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException
 from mlflow.tracking import MlflowClient
 
@@ -34,13 +36,23 @@ def list_experiments():
 
 
 @router.get("/training-history")
-def training_history(experiment: str = "medsync-federated"):
+def training_history(experiment: Optional[str] = None):
     client = MlflowClient()
-    exp = client.get_experiment_by_name(experiment)
-    if exp is None:
-        raise HTTPException(404, f"No such experiment: {experiment}")
 
-    runs = client.search_runs(experiment_ids=[exp.experiment_id],
+    if experiment is not None:
+        exp = client.get_experiment_by_name(experiment)
+        if exp is None:
+            raise HTTPException(404, f"No such experiment: {experiment}")
+        exp_ids = [exp.experiment_id]
+    else:
+        # No experiment given: show the most recent run across all of them,
+        # so the dashboard surfaces the latest result without the caller
+        # needing to know experiment names in advance.
+        exp_ids = [e.experiment_id for e in client.search_experiments() if e.name != "Default"]
+        if not exp_ids:
+            raise HTTPException(404, "No experiments logged yet")
+
+    runs = client.search_runs(experiment_ids=exp_ids,
                                order_by=["start_time DESC"], max_results=1)
     if not runs:
         raise HTTPException(404, f"No runs logged yet for experiment: {experiment}")

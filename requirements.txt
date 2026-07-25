@@ -6,6 +6,7 @@ nvflare==2.5.1
 opacus==1.5.2
 datasets==3.0.1
 huggingface_hub==0.25.1
+kaggle==2.2.4
 mlflow==2.16.2
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
