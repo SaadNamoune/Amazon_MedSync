@@ -5,6 +5,9 @@
 <title>MedSync Diagnostic Dashboard</title>
 <style>
   body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+  nav { margin-bottom: 24px; }
+  nav a { color: #2563eb; text-decoration: none; margin-right: 16px; font-size: 0.9rem; }
+  nav a:hover { text-decoration: underline; }
   h1 { font-size: 1.4rem; }
   .sub { color: #666; margin-top: -8px; }
   #drop { border: 2px dashed #aaa; border-radius: 8px; padding: 32px; text-align: center; cursor: pointer; }
@@ -19,6 +22,7 @@
 </style>
 </head>
 <body>
+  <nav><a href="/">Diagnostic Dashboard</a><a href="/monitoring">Federation Monitor</a></nav>
   <h1>MedSync Diagnostic Dashboard</h1>
   <p class="sub">Upload a chest X-ray to query the current federated global model.</p>
 

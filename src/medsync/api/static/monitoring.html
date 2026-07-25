@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MedSync Federation Monitor</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 860px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  .sub { color: #666; margin-top: 0; }
+  nav { margin-bottom: 24px; }
+  nav a { color: #2563eb; text-decoration: none; margin-right: 16px; font-size: 0.9rem; }
+  nav a:hover { text-decoration: underline; }
+  section { margin-top: 32px; }
+  h2 { font-size: 1.05rem; border-bottom: 1px solid #eee; padding-bottom: 6px; }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 12px; }
+  .chart-card { border: 1px solid #eee; border-radius: 8px; padding: 12px; }
+  .chart-card h3 { margin: 0 0 8px; font-size: 0.85rem; color: #444; font-weight: 600; }
+  svg { width: 100%; height: 140px; overflow: visible; }
+  .line { fill: none; stroke: #2563eb; stroke-width: 2; }
+  .dot { fill: #2563eb; }
+  .axis-label { font-size: 9px; fill: #888; }
+  .threshold { stroke: #dc2626; stroke-width: 1; stroke-dasharray: 4 3; }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  td, th { text-align: left; padding: 8px; border-bottom: 1px solid #eee; font-size: 0.85rem; }
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; background: #eff6ff; color: #2563eb; margin-right: 4px; }
+  .meta { color: #666; font-size: 0.85rem; margin-top: 8px; }
+  .err { color: #c00; }
+  .empty { color: #888; font-style: italic; }
+</style>
+</head>
+<body>
+  <nav><a href="/">Diagnostic Dashboard</a><a href="/monitoring">Federation Monitor</a></nav>
+  <h1>Federation Monitor</h1>
+  <p class="sub">Training history and hospital node status for the most recent federated run.</p>
+
+  <section id="run-section">
+    <h2>Training run</h2>
+    <div id="run-meta" class="meta"></div>
+    <div class="charts" id="charts"></div>
+  </section>
+
+  <section id="nodes-section">
+    <h2>Hospital nodes</h2>
+    <table id="nodes-table" style="display:none">
+      <thead><tr><th>Node</th><th>Images</th><th>Top findings</th></tr></thead>
+      <tbody id="nodes-body"></tbody>
+    </table>
+    <div id="nodes-empty" class="empty"></div>
+  </section>
+
+<script>
+async function loadTrainingHistory() {
+  const container = document.getElementById('charts');
+  const meta = document.getElementById('run-meta');
+  try {
+    const resp = await fetch('/api/training-history');
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(body.detail || `Request failed (${resp.status})`);
+    }
+    const data = await resp.json();
+    meta.innerHTML = `
+      <span class="badge">run ${data.run_id.slice(0, 8)}</span>
+      <span class="badge">${data.status}</span>
+      <span class="badge">${data.params.num_nodes} nodes</span>
+      <span class="badge">target ε ≤ ${data.params.target_epsilon}</span>
+    `;
+    renderChart(container, 'Global macro AUC', data.rounds, 'macro_auc', 0, 1, 0.5);
+    renderChart(container, 'Avg client training loss', data.rounds, 'avg_client_loss', 0, null, null);
+    renderChart(container, 'Max client ε (privacy spent)', data.rounds, 'max_client_epsilon', 0, null,
+                Number(data.params.target_epsilon));
+  } catch (e) {
+    meta.innerHTML = `<span class="err">${e.message}</span> — run <code>scripts/run_federation.py</code> to produce training history.`;
+  }
+}
+
+function renderChart(container, title, rounds, key, yMin, yMax, thresholdY) {
+  const card = document.createElement('div');
+  card.className = 'chart-card';
+  const h3 = document.createElement('h3');
+  h3.textContent = title;
+  card.appendChild(h3);
+
+  const values = rounds.map(r => r[key]).filter(v => v !== null && v !== undefined);
+  if (!values.length) {
+    card.innerHTML += '<div class="empty">No data</div>';
+    container.appendChild(card);
+    return;
+  }
+
+  const w = 380, h = 130, pad = 24;
+  const lo = yMin !== null ? yMin : Math.min(...values);
+  const hi = yMax !== null ? yMax : Math.max(...values) * 1.1;
+  const xStep = (w - pad * 2) / Math.max(rounds.length - 1, 1);
+  const yScale = v => h - pad - ((v - lo) / (hi - lo || 1)) * (h - pad * 2);
+
+  const points = rounds.map((r, i) => `${pad + i * xStep},${yScale(r[key])}`).join(' ');
+
+  let extra = '';
+  if (thresholdY !== null && thresholdY !== undefined) {
+    const ty = yScale(thresholdY);
+    extra = `<line class="threshold" x1="${pad}" y1="${ty}" x2="${w - pad}" y2="${ty}" />`;
+  }
+
+  const dots = rounds.map((r, i) =>
+    `<circle class="dot" cx="${pad + i * xStep}" cy="${yScale(r[key])}" r="2.5" />`
+  ).join('');
+
+  card.innerHTML += `
+    <svg viewBox="0 0 ${w} ${h}">
+      ${extra}
+      <polyline class="line" points="${points}" />
+      ${dots}
+      <text class="axis-label" x="${pad}" y="${h - 4}">round 1</text>
+      <text class="axis-label" x="${w - pad - 40}" y="${h - 4}">round ${rounds.length}</text>
+    </svg>
+  `;
+  container.appendChild(card);
+}
+
+async function loadNodes() {
+  const table = document.getElementById('nodes-table');
+  const body = document.getElementById('nodes-body');
+  const empty = document.getElementById('nodes-empty');
+  try {
+    const resp = await fetch('/api/nodes');
+    const nodes = await resp.json();
+    if (!nodes.length) {
+      empty.textContent = 'No partitioned data yet — run scripts/partition_data.py.';
+      return;
+    }
+    for (const node of nodes) {
+      const tr = document.createElement('tr');
+      const findings = node.top_labels.map(l => `${l.label.replaceAll('_', ' ')} (${l.count})`).join(', ');
+      tr.innerHTML = `<td>${node.node_id}</td><td>${node.num_images}</td><td>${findings}</td>`;
+      body.appendChild(tr);
+    }
+    table.style.display = 'table';
+  } catch (e) {
+    empty.textContent = 'Could not load node status.';
+  }
+}
+
+loadTrainingHistory();
+loadNodes();
+</script>
+</body>
+</html>
