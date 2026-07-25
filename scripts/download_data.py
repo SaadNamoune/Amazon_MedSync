@@ -32,6 +32,18 @@ def main():
     out_dir = Path(args.out_dir)
     img_dir = out_dir / "images"
     img_dir.mkdir(parents=True, exist_ok=True)
+    csv_path = out_dir / "labels.csv"
+
+    # Resume support: the streaming split has a stable, deterministic iteration
+    # order (no shuffling), so re-running just re-produces the same first N
+    # examples. Skip past whatever we already saved instead of re-downloading
+    # it -- that first batch is the expensive part (NIH's archive is slow).
+    n_already = 0
+    if csv_path.exists():
+        with open(csv_path) as f:
+            n_already = sum(1 for _ in f) - 1  # minus header
+        n_already = max(n_already, 0)
+        print(f"Resuming: {n_already} images already saved, skipping those in the stream")
 
     print(f"Streaming '{args.split}' split from alkzar90/NIH-Chest-X-ray-dataset ...")
     ds = load_dataset(
@@ -41,15 +53,18 @@ def main():
         streaming=True,
         trust_remote_code=True,
     )
+    if n_already:
+        ds = ds.skip(n_already)
 
     # Written incrementally (not buffered until the end) so an interrupted
     # streaming run -- these can take a long time over a slow remote archive
     # -- still leaves a usable, complete labels.csv for whatever finished.
-    csv_path = out_dir / "labels.csv"
-    n_written = 0
-    with open(csv_path, "w", newline="") as f:
+    n_written = n_already
+    mode = "a" if n_already else "w"
+    with open(csv_path, mode, newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(["filename"] + LABEL_NAMES)
+        if not n_already:
+            writer.writerow(["filename"] + LABEL_NAMES)
 
         for example in ds:
             if n_written >= args.num_images:

@@ -36,6 +36,14 @@ smallest node, under strong DP noise) and is **not** the project's accuracy
 result — it's confirmation the pipeline is wired correctly. Getting a real
 AUC signal needs the full dataset (see "Known limitations").
 
+**Follow-up experiment** (same 600 images, `--rounds 20 --local-epochs 3`
+instead of `5`/`1`): macro AUC rose to a peak of ~0.586 by round 5, then
+oscillated and drifted down to ~0.52–0.55 through round 20, rather than
+continuing to improve. That's the signature of a training-duration ceiling,
+not a training-duration bottleneck: more rounds on the same 51-181
+images/node buys a small one-time gain and then just adds noise. Confirms
+the real fix is more data, not more rounds -- see "Known limitations."
+
 ## Stack
 
 - **Model**: DenseNet121 / CheXNet architecture (torchvision, ImageNet-pretrained)
@@ -74,9 +82,13 @@ Requires an NVIDIA GPU (tested on RTX 3060, 6GB VRAM) with CUDA 12.1 drivers.
 
 ```powershell
 # 1. Pull a subset of NIH ChestX-ray14 from Hugging Face (no auth needed)
-#    Note: streams from NIH's remote archive at roughly 0.1-0.2 images/sec,
-#    so 600 images takes ~40-50 minutes. Scale --num-images down for a
-#    faster sanity check, or up (overnight) for a stronger training signal.
+#    Note: streams from NIH's remote archive at roughly 0.1-0.15 images/sec
+#    (~8.6 sec/image measured), so 600 images takes ~85 minutes and scales
+#    linearly -- 2500 images is ~6 hours. Re-running with a higher
+#    --num-images resumes (skips already-downloaded rows) rather than
+#    duplicating them, but skipping still re-walks the remote archive at
+#    the same rate, so it does NOT save wall-clock time on this source --
+#    it only avoids corrupting/duplicating what's already on disk.
 python scripts/download_data.py --num-images 600
 
 # 2. Split into 5 non-IID simulated hospital nodes
