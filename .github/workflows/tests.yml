@@ -14,5 +14,8 @@ jobs:
           python-version: "3.11"
       - name: Install CPU-only dependencies
         run: pip install -r requirements-ci.txt
+      # --no-deps: monai's torch>=2.8 requirement conflicts with the pinned CPU torch above
+      - name: Install monai
+        run: pip install --no-deps monai==1.6.0
       - name: Run tests
         run: pytest tests/ -v

@@ -32,11 +32,12 @@ def _fake_jpeg_bytes():
     return buf
 
 
-def test_predict_returns_all_labels():
+def test_predict_returns_all_labels(auth_token):
     from medsync.data.dataset import LABEL_NAMES
 
     resp = client.post(
         "/predict",
+        headers={"Authorization": f"Bearer {auth_token}"},
         files={"file": ("xray.jpg", _fake_jpeg_bytes(), "image/jpeg")},
     )
     assert resp.status_code == 200
@@ -46,9 +47,10 @@ def test_predict_returns_all_labels():
     assert body["inference_ms"] > 0
 
 
-def test_predict_rejects_bad_content_type():
+def test_predict_rejects_bad_content_type(auth_token):
     resp = client.post(
         "/predict",
+        headers={"Authorization": f"Bearer {auth_token}"},
         files={"file": ("notes.txt", io.BytesIO(b"hello"), "text/plain")},
     )
     assert resp.status_code == 400

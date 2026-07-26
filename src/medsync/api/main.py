@@ -7,19 +7,24 @@ training data, only the resulting weights.
 import io
 import sys
 import time
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import torch
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import Depends, FastAPI, File, UploadFile, HTTPException
+from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from PIL import Image
+from sqlalchemy.orm import Session
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 
 from medsync.models.chexnet import build_chexnet  # noqa: E402
 from medsync.data.dataset import LABEL_NAMES, build_transform  # noqa: E402
 from medsync.api.monitoring import router as monitoring_router  # noqa: E402
+from medsync.auth import authenticate_user, create_access_token, get_current_user  # noqa: E402
+from medsync.db import PredictionLog, User, get_db, init_db  # noqa: E402
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 MODEL_PATH = Path("global_model_final.pth")
@@ -27,7 +32,13 @@ _device = "cuda" if torch.cuda.is_available() else "cpu"
 _transform = build_transform(train=False)
 _model = None
 
-app = FastAPI(title="MedSync Diagnostic API", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
+
+
+app = FastAPI(title="MedSync Diagnostic API", version="0.1.0", lifespan=lifespan)
 app.include_router(monitoring_router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -37,9 +48,26 @@ def dashboard():
     return FileResponse(STATIC_DIR / "index.html")
 
 
+@app.get("/login")
+def login_page():
+    return FileResponse(STATIC_DIR / "login.html")
+
+
 @app.get("/monitoring")
 def monitoring_page():
     return FileResponse(STATIC_DIR / "monitoring.html")
+
+
+@app.post("/auth/login")
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
+    user = authenticate_user(db, form_data.username, form_data.password)
+    if not user:
+        raise HTTPException(401, "Incorrect username or password")
+    return {
+        "access_token": create_access_token(user.username),
+        "token_type": "bearer",
+        "role": user.role,
+    }
 
 
 def get_model():
@@ -58,7 +86,11 @@ def health():
 
 
 @app.post("/predict")
-async def predict(file: UploadFile = File(...)):
+async def predict(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
     if file.content_type not in ("image/jpeg", "image/png"):
         raise HTTPException(400, "Upload a JPEG or PNG chest X-ray image")
 
@@ -73,7 +105,18 @@ async def predict(file: UploadFile = File(...)):
 
     elapsed_ms = (time.perf_counter() - start) * 1000
     findings = {name: round(prob, 4) for name, prob in zip(LABEL_NAMES, probs)}
+    sorted_findings = dict(sorted(findings.items(), key=lambda kv: -kv[1]))
+    top_finding, top_probability = next(iter(sorted_findings.items()))
+
+    db.add(PredictionLog(
+        user_id=current_user.id,
+        top_finding=top_finding,
+        top_probability=top_probability,
+        inference_ms=elapsed_ms,
+    ))
+    db.commit()
+
     return {
-        "findings": dict(sorted(findings.items(), key=lambda kv: -kv[1])),
+        "findings": sorted_findings,
         "inference_ms": round(elapsed_ms, 1),
     }

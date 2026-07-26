@@ -18,7 +18,9 @@ the full dataset and multi-day training is the next milestone — see
 Two web interfaces are live: a clinician-facing **diagnostic dashboard**
 (`/`, upload an X-ray, get findings) and an ops-facing **federation
 monitor** (`/monitoring`, per-round AUC/loss/privacy-budget charts and
-per-node status), both served by the same FastAPI app.
+per-node status), both served by the same FastAPI app, sharing one design
+system (`static/style.css`, light/dark mode). Both are behind login now --
+see "Platform features" below.
 
 ### Experiment history (chronological, all real runs -- see `mlruns/`)
 
@@ -74,8 +76,41 @@ HF streaming still works, it's just the slower option.
 - **Tracking**: MLflow
 - **Serving**: FastAPI, two interfaces -- diagnostic dashboard (`/`) and
   federation monitor (`/monitoring`)
+- **Platform**: JWT auth (login-gated `/predict`) + SQLite (`medsync.db`,
+  via SQLAlchemy) for user accounts and a prediction log -- separate from
+  MLflow, which stays the source of truth for training runs
 - **Deployment**: Docker Compose (hospital node + MLflow server); a
   separate Dockerfile (`docker/Dockerfile.nvflare`) for the NVFlare path
+
+## Platform features
+
+Beyond the ML pipeline itself, there's a real (if intentionally minimal)
+application layer:
+
+- **Authentication**: JWT-based login (`/auth/login`), required for
+  `/predict`. No public self-registration -- accounts are created by an
+  admin via `scripts/create_user.py`, matching how real clinical software
+  is provisioned (a hospital's IT admin creates staff accounts; there's no
+  "sign up" button on a system that queries patient diagnostics).
+- **Database**: SQLite (`medsync.db`) via SQLAlchemy, holding `users` and
+  a `prediction_log` (who queried the model, what the top finding was,
+  how long inference took). This is deliberately separate from MLflow --
+  MLflow tracks *training* runs, this tracks *serving-time* usage.
+- **Design system**: one shared stylesheet (`static/style.css`) across all
+  three pages (diagnostic dashboard, federation monitor, login), with
+  CSS-variable-based light/dark mode following the OS preference, rather
+  than three pages independently reinventing colors and spacing.
+
+```powershell
+# Create an account (prompts for password if omitted -- don't put real
+# passwords on the command line, they end up in shell history)
+python scripts/create_user.py --username dr.smith --role clinician
+```
+
+The JWT signing secret defaults to an insecure placeholder for local dev
+(`medsync/auth.py`); set a real one via the `MEDSYNC_JWT_SECRET`
+environment variable for anything beyond your own machine -- Docker
+Compose below requires it.
 
 ## NVFlare integration
 
@@ -190,6 +225,13 @@ kaggle datasets download -d nih-chest-xrays/sample -p <some-dir>
 # unzip it, then:
 python scripts/convert_kaggle_sample.py --kaggle-dir <extracted-dir>
 
+#    (a2) Or the FULL 112,120-image dataset the same way (~45GB download,
+#         ~90GB peak disk during extraction -- delete the raw zip/PNGs
+#         afterward, the converted/resized output is only ~2-3GB):
+kaggle datasets download -d nih-chest-xrays/data -p <some-dir>
+# unzip it (12 images_NNN/ subfolders + Data_Entry_2017.csv), then:
+python scripts/convert_full_nih_dataset.py --kaggle-dir <extracted-dir>
+
 #    (b) Hugging Face streaming (no auth, but slow: ~8.6 sec/image, so
 #        600 images takes ~85 min and it scales linearly -- 2500 would be
 #        ~6 hours). Re-running with a higher --num-images resumes (skips
@@ -207,8 +249,12 @@ python scripts/run_federation.py --rounds 10 --local-epochs 2
 # 4. Inspect metrics
 mlflow ui   # http://localhost:5000
 
-# 5. Serve the resulting global model + both web interfaces
+# 5. Create a login (prompts for password) -- required once, accounts persist in medsync.db
+python scripts/create_user.py --username dr.smith --role clinician
+
+# 6. Serve the resulting global model + both web interfaces
 uvicorn medsync.api.main:app --reload --app-dir src
+#    http://localhost:8000/login       -- sign in first
 #    http://localhost:8000/            -- diagnostic dashboard (upload an X-ray)
 #    http://localhost:8000/monitoring  -- federation monitor (training history, node status)
 ```
@@ -216,6 +262,11 @@ uvicorn medsync.api.main:app --reload --app-dir src
 ## Docker
 
 ```powershell
+# SQLite bind-mounts need the file to already exist on the host, or Docker
+# creates a directory at that path instead (breaking it) -- one-time setup:
+New-Item -ItemType File -Path medsync.db -Force
+
+$env:MEDSYNC_JWT_SECRET = "some-random-string-not-the-dev-default"
 docker compose up --build
 ```
 

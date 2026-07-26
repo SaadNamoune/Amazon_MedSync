@@ -8,6 +8,7 @@ mlartifacts/
 nvflare_workspace/
 *.pth
 *.ckpt
+*.db
 .env
 .ipynb_checkpoints/
 *.log

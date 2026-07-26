@@ -17,6 +17,9 @@ pillow==10.4.0
 tqdm==4.66.5
 requests==2.32.3
 python-multipart==0.0.9
+sqlalchemy==2.0.16
+bcrypt==5.0.0
+pyjwt==2.13.0
 
 # monai is NOT listed above on purpose: monai==1.6.0 hard-requires
 # torch>=2.8.0, which conflicts with the pinned torch==2.4.1+cu121 above

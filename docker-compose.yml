@@ -23,7 +23,9 @@ services:
       - "8000:8000"
     volumes:
       - ./global_model_final.pth:/app/global_model_final.pth:ro
+      - ./medsync.db:/app/medsync.db
     environment:
       - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - MEDSYNC_JWT_SECRET=${MEDSYNC_JWT_SECRET:?Set MEDSYNC_JWT_SECRET in your environment or .env file}
     depends_on:
       - mlflow

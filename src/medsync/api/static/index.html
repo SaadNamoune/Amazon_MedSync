@@ -2,43 +2,60 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MedSync Diagnostic Dashboard</title>
+<link rel="stylesheet" href="/static/style.css">
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; color: #1a1a1a; }
-  nav { margin-bottom: 24px; }
-  nav a { color: #2563eb; text-decoration: none; margin-right: 16px; font-size: 0.9rem; }
-  nav a:hover { text-decoration: underline; }
-  h1 { font-size: 1.4rem; }
-  .sub { color: #666; margin-top: -8px; }
-  #drop { border: 2px dashed #aaa; border-radius: 8px; padding: 32px; text-align: center; cursor: pointer; }
-  #drop.drag { border-color: #2563eb; background: #eff6ff; }
-  #preview { max-width: 100%; margin-top: 16px; border-radius: 8px; display: none; }
-  table { width: 100%; border-collapse: collapse; margin-top: 20px; }
-  td, th { text-align: left; padding: 6px 8px; border-bottom: 1px solid #eee; font-size: 0.9rem; }
-  .bar { background: #2563eb; height: 8px; border-radius: 4px; }
-  .barbg { background: #eee; border-radius: 4px; width: 100%; }
-  #meta { color: #666; font-size: 0.85rem; margin-top: 12px; }
-  #err { color: #c00; margin-top: 12px; }
+  #drop { border: 2px dashed var(--border); border-radius: 10px; padding: 36px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
+  #drop.drag { border-color: var(--primary); background: var(--primary-bg); }
+  #drop span { color: var(--text-muted); font-size: 0.95rem; }
+  #preview { max-width: 100%; margin-top: 16px; border-radius: 10px; display: none; }
+  .bar { background: var(--primary); height: 8px; border-radius: 4px; }
+  .barbg { background: var(--border); border-radius: 4px; width: 100%; }
+  .hidden { display: none; }
 </style>
 </head>
 <body>
-  <nav><a href="/">Diagnostic Dashboard</a><a href="/monitoring">Federation Monitor</a></nav>
-  <h1>MedSync Diagnostic Dashboard</h1>
-  <p class="sub">Upload a chest X-ray to query the current federated global model.</p>
-
-  <div id="drop">
-    <input type="file" id="file" accept="image/png,image/jpeg" style="display:none">
-    <span>Click or drop a JPEG/PNG chest X-ray here</span>
+  <div class="topbar">
+    <a class="brand" href="/">MedSync<span class="dot">.</span></a>
+    <nav>
+      <a href="/" class="active">Diagnostic Dashboard</a>
+      <a href="/monitoring">Federation Monitor</a>
+      <a href="#" id="logout-link">Sign out</a>
+    </nav>
   </div>
-  <img id="preview">
-  <div id="err"></div>
-  <table id="results" style="display:none">
-    <thead><tr><th>Finding</th><th>Probability</th><th></th></tr></thead>
-    <tbody id="results-body"></tbody>
-  </table>
-  <div id="meta"></div>
+
+  <div class="page">
+    <h1>Diagnostic Dashboard</h1>
+    <p class="sub">Upload a chest X-ray to query the current federated global model.</p>
+
+    <div class="card">
+      <div id="drop">
+        <input type="file" id="file" accept="image/png,image/jpeg" class="hidden">
+        <span>Click or drop a JPEG/PNG chest X-ray here</span>
+      </div>
+      <img id="preview">
+      <div id="err"></div>
+      <table id="results" class="hidden">
+        <thead><tr><th>Finding</th><th>Probability</th><th></th></tr></thead>
+        <tbody id="results-body"></tbody>
+      </table>
+      <div id="meta"></div>
+    </div>
+  </div>
 
 <script>
+const token = localStorage.getItem('medsync_token');
+if (!token) {
+  window.location.href = '/login';
+}
+
+document.getElementById('logout-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  localStorage.removeItem('medsync_token');
+  window.location.href = '/login';
+});
+
 const drop = document.getElementById('drop');
 const fileInput = document.getElementById('file');
 const preview = document.getElementById('preview');
@@ -61,7 +78,7 @@ fileInput.addEventListener('change', () => {
 
 async function handleFile(file) {
   err.textContent = '';
-  resultsTable.style.display = 'none';
+  resultsTable.classList.add('hidden');
   meta.textContent = '';
 
   preview.src = URL.createObjectURL(file);
@@ -71,7 +88,16 @@ async function handleFile(file) {
   formData.append('file', file);
 
   try {
-    const resp = await fetch('/predict', { method: 'POST', body: formData });
+    const resp = await fetch('/predict', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${token}` },
+      body: formData,
+    });
+    if (resp.status === 401) {
+      localStorage.removeItem('medsync_token');
+      window.location.href = '/login';
+      return;
+    }
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(body.detail || `Request failed (${resp.status})`);
@@ -95,7 +121,7 @@ function renderResults(data) {
     `;
     resultsBody.appendChild(tr);
   }
-  resultsTable.style.display = 'table';
+  resultsTable.classList.remove('hidden');
   meta.textContent = `Inference time: ${data.inference_ms} ms`;
 }
 </script>
