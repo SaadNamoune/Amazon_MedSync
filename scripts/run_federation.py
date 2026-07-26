@@ -16,7 +16,7 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from medsync.data.dataset import ChestXrayDataset  # noqa: E402
+from medsync.data.dataset import split_train_val  # noqa: E402
 from medsync.models.chexnet import build_chexnet  # noqa: E402
 from medsync.federation.client import LocalClient  # noqa: E402
 from medsync.federation.fedavg import federated_average  # noqa: E402
@@ -47,12 +47,7 @@ def main():
     clients, held_out_datasets = [], []
     for node_id in range(args.num_nodes):
         node_dir = partitions_dir / f"node_{node_id}"
-        full_ds = ChestXrayDataset(node_dir, train=True)
-        n_val = max(1, int(len(full_ds) * args.val_split))
-        n_train = len(full_ds) - n_val
-        train_ds, val_ds = torch.utils.data.random_split(
-            full_ds, [n_train, n_val], generator=torch.Generator().manual_seed(42)
-        )
+        train_ds, val_ds = split_train_val(node_dir, val_split=args.val_split)
         held_out_datasets.append(val_ds)
         clients.append(LocalClient(
             node_id=node_id, dataset=train_ds, batch_size=args.batch_size,
@@ -60,7 +55,7 @@ def main():
             target_delta=args.target_delta,
             max_grad_norm=args.max_grad_norm, device=args.device,
         ))
-        print(f"node_{node_id}: {n_train} train / {n_val} held-out eval images")
+        print(f"node_{node_id}: {len(train_ds)} train / {len(val_ds)} held-out eval images")
 
     global_eval_ds = torch.utils.data.ConcatDataset(held_out_datasets)
 

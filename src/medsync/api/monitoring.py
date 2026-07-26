@@ -5,6 +5,7 @@ hospital node status (from the partitioned data on disk). This is the
 main.py's clinician-facing single-image prediction endpoint.
 """
 import csv
+import math
 from pathlib import Path
 
 from typing import Optional
@@ -16,6 +17,19 @@ router = APIRouter(prefix="/api")
 
 PARTITIONS_DIR = Path("data/partitions")
 METRIC_KEYS = ["macro_auc", "avg_client_loss", "max_client_epsilon"]
+
+
+def _json_safe(value):
+    """Starlette's JSONResponse renders with allow_nan=False (correctly,
+    NaN/Infinity aren't valid JSON), so a NaN metric -- which happens for
+    real on degenerate data, e.g. an eval set too small for any label to
+    have both classes present -- crashes the whole response with a 500
+    instead of just... being null, which is what it actually means here."""
+    if value is None:
+        return None
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
 
 
 @router.get("/experiments")
@@ -63,7 +77,7 @@ def training_history(experiment: Optional[str] = None):
     by_step = {key: {m.step: m.value for m in hist} for key, hist in histories.items()}
 
     rounds = [
-        {"round": step, **{key: by_step[key].get(step) for key in METRIC_KEYS}}
+        {"round": step, **{key: _json_safe(by_step[key].get(step)) for key in METRIC_KEYS}}
         for step in steps
     ]
 

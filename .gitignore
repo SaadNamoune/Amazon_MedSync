@@ -4,6 +4,8 @@ __pycache__/
 data/raw/
 data/partitions/
 mlruns/
+mlartifacts/
+nvflare_workspace/
 *.pth
 *.ckpt
 .env

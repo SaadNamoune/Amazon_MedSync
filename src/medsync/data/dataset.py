@@ -49,3 +49,29 @@ class ChestXrayDataset(Dataset):
         image = self.transform(image)
         labels = torch.tensor([float(row[name]) for name in LABEL_NAMES])
         return image, labels
+
+
+def split_train_val(node_dir: str, val_split: float = 0.15, seed: int = 42):
+    """Splits one node's shard into train/held-out-val, deterministically
+    (fixed seed) so the same held-out images are used whether the caller is
+    the custom simulator or the NVFlare-orchestrated job -- their results
+    are only comparable if they evaluate on the same data."""
+    full_ds = ChestXrayDataset(node_dir, train=True)
+    n_val = max(1, int(len(full_ds) * val_split))
+    n_train = len(full_ds) - n_val
+    return torch.utils.data.random_split(
+        full_ds, [n_train, n_val], generator=torch.Generator().manual_seed(seed)
+    )
+
+
+def load_pooled_eval_dataset(partitions_dir: str, num_nodes: int, val_split: float = 0.15):
+    """Held-out validation images pooled across all hospital nodes -- this
+    is what "global macro AUC" is measured against."""
+    from pathlib import Path as _Path
+
+    held_out = []
+    for node_id in range(num_nodes):
+        node_dir = _Path(partitions_dir) / f"node_{node_id}"
+        _, val_ds = split_train_val(node_dir, val_split=val_split)
+        held_out.append(val_ds)
+    return torch.utils.data.ConcatDataset(held_out)

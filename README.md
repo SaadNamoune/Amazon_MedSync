@@ -61,28 +61,112 @@ HF streaming still works, it's just the slower option.
 
 ## Stack
 
-- **Model**: DenseNet121 / CheXNet architecture (torchvision, ImageNet-pretrained)
-- **Federation**: custom FedAvg simulator (`src/medsync/federation/`) — see
-  "Alternatives considered"
+- **Model**: MONAI's `DenseNet121` (medical-imaging-oriented model library),
+  CheXNet-style multi-label head, ImageNet-pretrained
+- **Federation**: two orchestrators, both real, both wired to the same
+  DP-SGD client logic (`src/medsync/federation/client.py`):
+  - a custom FedAvg simulator (`scripts/run_federation.py`) -- simple,
+    fully GPU-verified, the default/recommended path
+  - an actual NVIDIA FLARE job (`scripts/run_nvflare_job.py` +
+    `src/medsync/federation/nvflare_controller.py`) -- see "NVFlare
+    integration" below for what that took and its current constraints
 - **Privacy**: Opacus DP-SGD per client, per-round epsilon tracked and logged
 - **Tracking**: MLflow
 - **Serving**: FastAPI, two interfaces -- diagnostic dashboard (`/`) and
   federation monitor (`/monitoring`)
-- **Deployment**: Docker Compose (hospital node + MLflow server)
+- **Deployment**: Docker Compose (hospital node + MLflow server); a
+  separate Dockerfile (`docker/Dockerfile.nvflare`) for the NVFlare path
 
-## Alternatives considered
+## NVFlare integration
 
-NVIDIA FLARE was the original plan (per the project proposal) for
-production-grade federated orchestration. It's installed
-(`requirements.txt`) but the training loop here is a custom, from-scratch
-FedAvg simulator instead of a FLARE Job. Reasoning: FLARE's Job API adds
-real setup and debugging surface (client/server process management, job
-config, secure provisioning) that isn't needed to validate the core
-ML/privacy pipeline first. Once the modeling side is proven out, migrating
-the same client/server/aggregation logic into a FLARE Job is the natural
-next step for real multi-machine deployment (cross-institution networking,
-TLS, admin console) — the current code is structured so that migration is
-mostly plumbing, not a rewrite.
+NVIDIA FLARE is genuinely wired in now, not just installed unused: the
+model, the DP-SGD client training, and the FedAvg aggregation are all
+identical to the custom simulator (same `LocalClient`, same
+`build_chexnet`/`CheXNet`), just orchestrated by NVFlare's Job API
+(`MedSyncFedJob`/`MedSyncFedAvg` in `nvflare_controller.py`) and its local
+simulator instead of a hand-rolled Python loop. Getting there surfaced
+eight real, separate bugs, each fixed rather than worked around
+superficially:
+
+1. NVFlare's model validator requires the training module to already be in
+   `.train()` mode before wrapping -- irrelevant to NVFlare specifically,
+   this one also affected the custom simulator (fixed in `client.py`).
+2. MONAI's `DenseNet121` needs three required constructor args
+   (`spatial_dims`, `in_channels`, `out_channels`), but NVFlare's Job API
+   reconstructs registered model components by calling `ClassName()` with
+   no arguments (it serializes a JSON config, it doesn't pickle the live
+   object) -- fixed by making `CheXNet` a real subclass with everything
+   defaulted, and folding the GroupNorm/Opacus fix into `__init__` itself
+   so a bare `CheXNet()` reconstruction is still fully consistent with
+   every other copy in the system.
+3. Passing an already-built `Dataset` into a controller's constructor
+   fails the same way ("Object of type Subset is not JSON serializable")
+   -- fixed by passing plain strings/ints/floats and building the eval
+   set lazily inside `run()`.
+4. NVFlare deploys and runs each client script from a per-site job
+   workspace directory, not the repo root -- relative paths like
+   `data/partitions` silently resolve against the wrong cwd there. Fixed
+   by resolving to absolute paths once, in the top-level job script, and
+   passing them explicitly via `script_args`.
+5. **Windows-only**: `nvflare/fuel/f3/cellnet/net_agent.py` does an
+   unconditional `import resource` (POSIX-only, used by an admin
+   diagnostics command this project never calls) -- native Windows Python
+   can't even import `nvflare` without a shim (`medsync/_win_compat.py`).
+6. **Windows-only, unfixable by a shim**: NVFlare's simulator launches
+   subprocesses via `subprocess.Popen(..., preexec_fn=os.setsid, ...)` --
+   `os.setsid` doesn't exist on Windows, and Python's `subprocess.Popen`
+   doesn't support `preexec_fn` on Windows at all. This is a hard platform
+   wall, not something a compatibility stub can paper over.
+7. NVFlare deploys and runs the *controller* (not just client scripts)
+   from its own per-job workspace directory too -- MLflow's default
+   `./mlruns` silently resolved there instead of this project's real
+   `mlruns/`, so training metrics were being logged somewhere invisible to
+   `/monitoring`. Fixed with an explicit absolute `mlflow.set_tracking_uri()`
+   passed in from the top-level job script, same fix pattern as #4.
+8. NVFlare's built-in weighted-average aggregator hands back **numpy
+   arrays**, not torch tensors, regardless of the `PYTORCH` exchange
+   format each client sends (`load_state_dict` then fails outright:
+   "expected torch.Tensor ... but received numpy.ndarray"). This one only
+   shows up on round 2+ if unfixed -- round 1 has nothing to aggregate
+   from a prior round, so it's easy to miss testing with `--rounds 1`.
+   Fixed by converting back to torch right after aggregation, in place,
+   since the same object is what gets broadcast to clients next round.
+
+Because of #6, **the NVFlare path only runs on Linux/Mac, or Docker/WSL2
+on Windows** -- it cannot run via native Windows Python, unlike everything
+else in this repo. `docker/Dockerfile.nvflare` + the commands below are
+the verified way to run it from Windows:
+
+```powershell
+docker build -f docker/Dockerfile.nvflare -t medsync-nvflare .
+docker run --rm `
+  -v ${PWD}/data/partitions:/app/data/partitions:ro `
+  -v ${PWD}/mlruns:/app/mlruns `
+  medsync-nvflare --rounds 5 --device cpu --experiment medsync-nvflare
+```
+
+(`--device cpu`: this Docker setup has no GPU passthrough configured, so
+NVFlare-orchestrated runs are CPU-only. This turned out to matter a lot:
+a run against the full 5,606-image partitioned dataset took upwards of
+20+ hours without completing a single round -- Opacus's per-sample-gradient
+overhead on a 121-layer model, uninaccelerated, at that data volume, in a
+resource-constrained container, is genuinely impractical, not hung. **The
+integration itself is verified correct** via a fast synthetic smoke test
+instead: 5 nodes x 6 tiny images, 2 full rounds, completed in under 5
+minutes with correct MLflow logging and correct weight aggregation across
+both rounds (`FINISHED` status, visible in `/monitoring`). Getting
+practical speed out of the NVFlare path needs the NVIDIA Container Toolkit
+configured on top of Docker Desktop's WSL2 backend for real GPU
+passthrough -- not attempted in this session.)
+
+Given the custom simulator is simpler, already GPU-verified at full data
+scale, and produces identical training semantics, it remains the
+recommended path for actually generating results (see "Experiment
+history" -- all real numbers there come from the custom simulator on
+GPU); the NVFlare path exists to demonstrate real integration with the
+framework named in the original proposal, and as the natural next step if
+this ever needs true multi-machine, cross-institution deployment (secure
+provisioning, TLS, admin console) rather than one-process simulation.
 
 ## Setup
 
@@ -146,7 +230,8 @@ Brings up an MLflow tracking server and one hospital-node diagnostic API
   the project's 0.85 target — do not quote it as the final headline metric.
 - **Single machine**: all 5 "hospital nodes" are simulated in one process
   on one GPU. Real deployment needs one node per physical/cloud location.
-- **NVFlare migration**: see "Alternatives considered" above.
+- **NVFlare on Windows**: the NVFlare-orchestrated path requires Linux/Mac
+  or Docker/WSL2 -- see "NVFlare integration" above for exactly why.
 - **Privacy accounting**: per-round epsilon is tracked per client via
   Opacus's accountant; a cross-round composition analysis (total epsilon
   spent over all rounds, not just per-round) is not yet implemented.

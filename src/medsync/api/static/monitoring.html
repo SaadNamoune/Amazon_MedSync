@@ -26,15 +26,19 @@
   .meta { color: #666; font-size: 0.85rem; margin-top: 8px; }
   .err { color: #c00; }
   .empty { color: #888; font-style: italic; }
+  #experiment-picker { font-size: 0.85rem; padding: 4px 8px; border-radius: 6px; border: 1px solid #ddd; background: #fff; float: right; display: none; }
 </style>
 </head>
 <body>
   <nav><a href="/">Diagnostic Dashboard</a><a href="/monitoring">Federation Monitor</a></nav>
   <h1>Federation Monitor</h1>
-  <p class="sub">Training history and hospital node status for the most recent federated run.</p>
+  <p class="sub">Training history and hospital node status for the selected federated run.</p>
 
   <section id="run-section">
-    <h2>Training run</h2>
+    <h2>
+      Training run
+      <select id="experiment-picker"></select>
+    </h2>
     <div id="run-meta" class="meta"></div>
     <div class="charts" id="charts"></div>
   </section>
@@ -49,11 +53,28 @@
   </section>
 
 <script>
-async function loadTrainingHistory() {
+async function loadExperimentList() {
+  const picker = document.getElementById('experiment-picker');
+  try {
+    const resp = await fetch('/api/experiments');
+    const experiments = await resp.json();
+    if (!experiments.length) return;
+
+    picker.innerHTML = experiments.map(e => `<option value="${e.name}">${e.name}</option>`).join('');
+    picker.style.display = 'inline-block';
+    picker.addEventListener('change', () => loadTrainingHistory(picker.value));
+  } catch (e) {
+    // Picker just stays hidden; loadTrainingHistory() still shows the default run.
+  }
+}
+
+async function loadTrainingHistory(experiment) {
   const container = document.getElementById('charts');
   const meta = document.getElementById('run-meta');
+  container.innerHTML = '';
   try {
-    const resp = await fetch('/api/training-history');
+    const url = experiment ? `/api/training-history?experiment=${encodeURIComponent(experiment)}` : '/api/training-history';
+    const resp = await fetch(url);
     if (!resp.ok) {
       const body = await resp.json().catch(() => ({}));
       throw new Error(body.detail || `Request failed (${resp.status})`);
@@ -70,7 +91,7 @@ async function loadTrainingHistory() {
     renderChart(container, 'Max client ε (privacy spent)', data.rounds, 'max_client_epsilon', 0, null,
                 Number(data.params.target_epsilon));
   } catch (e) {
-    meta.innerHTML = `<span class="err">${e.message}</span> — run <code>scripts/run_federation.py</code> to produce training history.`;
+    meta.innerHTML = `<span class="err">${e.message}</span> — run <code>scripts/run_federation.py</code> or <code>scripts/run_nvflare_job.py</code> to produce training history.`;
   }
 }
 
@@ -141,6 +162,7 @@ async function loadNodes() {
   }
 }
 
+loadExperimentList();
 loadTrainingHistory();
 loadNodes();
 </script>
