@@ -8,12 +8,11 @@ which aggregates them with FedAvg.
 
 ## Status
 
-This is an early working prototype, not the final target system. It
-validates the full pipeline end-to-end on real NIH ChestX-ray14 data
-(currently the 5,606-image official Kaggle sample, not the full
-112,120-image set the proposal's AUC ≥ 0.85 target assumes). Scaling to
-the full dataset and multi-day training is the next milestone — see
-"Known limitations" below.
+This is a working prototype, not the final target system, but it now
+trains end-to-end on the **full 112,120-image NIH ChestX-ray14 dataset**
+(not a subset) with real, monotonically-improving results — see
+experiment #4 below. Still well short of the proposal's 0.85 AUC target;
+"Known limitations" covers what's between here and there.
 
 Two web interfaces are live: a clinician-facing **diagnostic dashboard**
 (`/`, upload an X-ray, get findings) and an ops-facing **federation
@@ -60,6 +59,35 @@ resume/skip). Switched to Kaggle's bulk zip of the same official NIH
 sample (`scripts/convert_kaggle_sample.py`) for run #3 -- same data,
 downloads in ~2 minutes instead of ~13 hours. Both scripts are kept;
 HF streaming still works, it's just the slower option.
+
+**4. Full 112,120-image NIH dataset, non-IID across 5 nodes** (node sizes
+11,140-31,939 after partitioning; 8 rounds x 1 local epoch, batch size
+32, `scripts/convert_full_nih_dataset.py` + `scripts/run_federation.py`):
+
+```
+round  global_macro_auc  max_client_epsilon
+1      0.5241            0.403
+2      0.5371            0.403
+3      0.5507            0.403
+4      0.5548            0.403
+5      0.5599            0.403
+6      0.5649            0.403
+7      0.5688            0.403
+8      0.5702            0.403
+```
+
+Clean, monotonic improvement every single round (no oscillation, unlike
+the smaller-dataset runs) -- **macro AUC reached 0.5702**, with the privacy
+budget holding at ε≤0.403 throughout (tighter than the ε≤1.0 target, since
+the much larger per-node datasets need less noise to hit the same target
+epsilon). Read honestly: the climb hasn't plateaued -- only 8 total passes
+over each node's data happened here (federated rounds x local epochs), far
+fewer than the 20-50+ epochs published CheXNet-style results typically use
+to reach their higher AUC numbers, and DP-SGD noise slows convergence
+further as a deliberate privacy/utility tradeoff. More training rounds
+would very likely keep improving this number; this run was stopped at 8
+rounds as the reported result rather than chasing the 0.85 target further
+in this session -- see "Known limitations".
 
 ## Stack
 
@@ -216,21 +244,24 @@ Requires an NVIDIA GPU (tested on RTX 3060, 6GB VRAM) with CUDA 12.1 drivers.
 ## Running the pipeline
 
 ```powershell
-# 1. Get data -- two options:
+# 1. Get data -- three options:
 
-#    (a) Kaggle bulk download (recommended, ~2 minutes for 5,606 images).
-#        Needs a Kaggle API token at C:\Users\<you>\.kaggle\access_token
-#        (from kaggle.com -> Settings -> API -> Create New Token).
-kaggle datasets download -d nih-chest-xrays/sample -p <some-dir>
-# unzip it, then:
-python scripts/convert_kaggle_sample.py --kaggle-dir <extracted-dir>
-
-#    (a2) Or the FULL 112,120-image dataset the same way (~45GB download,
-#         ~90GB peak disk during extraction -- delete the raw zip/PNGs
-#         afterward, the converted/resized output is only ~2-3GB):
+#    (a) Full 112,120-image NIH dataset via Kaggle (recommended, and what
+#        experiment #4's real results use). ~45GB download, ~90GB peak
+#        disk during extraction on a SEPARATE drive if your project drive
+#        is tight -- delete the raw zip/PNGs afterward, the converted
+#        output is only ~2-3GB. Needs a Kaggle API token at
+#        C:\Users\<you>\.kaggle\access_token (kaggle.com -> Settings ->
+#        API -> Create New Token).
 kaggle datasets download -d nih-chest-xrays/data -p <some-dir>
 # unzip it (12 images_NNN/ subfolders + Data_Entry_2017.csv), then:
 python scripts/convert_full_nih_dataset.py --kaggle-dir <extracted-dir>
+
+#    (a2) Or just the 5,606-image sample for a much faster sanity check
+#         (~2 minutes total, used for experiments #1-3):
+kaggle datasets download -d nih-chest-xrays/sample -p <some-dir>
+# unzip it, then:
+python scripts/convert_kaggle_sample.py --kaggle-dir <extracted-dir>
 
 #    (b) Hugging Face streaming (no auth, but slow: ~8.6 sec/image, so
 #        600 images takes ~85 min and it scales linearly -- 2500 would be
@@ -243,8 +274,11 @@ python scripts/download_data.py --num-images 600
 # 2. Split into 5 non-IID simulated hospital nodes
 python scripts/partition_data.py --num-nodes 5 --alpha 0.5
 
-# 3. Run federated training (FedAvg + DP-SGD), logs to MLflow
-python scripts/run_federation.py --rounds 10 --local-epochs 2
+# 3. Run federated training (FedAvg + DP-SGD), logs to MLflow.
+#    Experiment #4's real numbers used these settings on the full dataset;
+#    more rounds/local-epochs would likely keep improving AUC (see README
+#    "Known limitations") at the cost of longer training time.
+python scripts/run_federation.py --rounds 8 --local-epochs 1 --batch-size 32
 
 # 4. Inspect metrics
 mlflow ui   # http://localhost:5000
@@ -275,10 +309,14 @@ Brings up an MLflow tracking server and one hospital-node diagnostic API
 
 ## Known limitations / next steps
 
-- **Dataset size**: prototyped on the 5,606-image official Kaggle sample
-  (363-2305/node after non-IID partitioning), not the full 112,120-image
-  NIH set. The 0.558 macro AUC from experiment #3 is real but well below
-  the project's 0.85 target — do not quote it as the final headline metric.
+- **Training duration**: now trains on the full 112,120-image NIH set
+  (experiment #4), so dataset size is no longer the bottleneck it was in
+  experiments #1-3. The 0.5702 macro AUC is real, current, and climbing
+  cleanly every round -- but only 8 rounds x 1 local epoch have run so
+  far. The clear next lever is more rounds/epochs (30-50+, matching what
+  published non-federated, non-private CheXNet results use), not more
+  data. Do not quote 0.5702 as a ceiling -- it's a checkpoint mid-climb,
+  not a plateau.
 - **Single machine**: all 5 "hospital nodes" are simulated in one process
   on one GPU. Real deployment needs one node per physical/cloud location.
 - **NVFlare on Windows**: the NVFlare-orchestrated path requires Linux/Mac
