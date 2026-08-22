@@ -5,9 +5,8 @@
 **Team Name:** MedSync Team
 
 **Team Members:**
-- Saad Seif el islam Namoune — Student ID: *TBD* — ms_namoune@esi.dz
-- Yasmine Haous — Student ID: *TBD* — my_haouas@esi.dz
-- *[Name TBD]* — Student ID: *TBD* — kevin.b@students.opit.com
+- Saad Seif el islam Namoune — Student ID: 22/0248 — ms_namoune@esi.dz
+- Yasmine Haous — Student ID: 22/0037 — my_haouas@esi.dz
 
 ---
 
@@ -142,6 +141,10 @@ flowchart TB
     Clinician(["Clinician"]) --> FE
 ```
 
+*(Renders automatically on GitHub. A pre-rendered image is also available
+at [`docs/architecture-diagram.png`](docs/architecture-diagram.png) in
+case the submission platform doesn't render Mermaid.)*
+
 ### Features Implemented
 
 - **Federated Diagnostic Model Training**: 5 simulated hospitals
@@ -220,9 +223,15 @@ flowchart TB
 
 ### Team Contributions
 
-*[To be completed by the team — e.g., who led the ML/federated-learning
-core, who led the platform/UI layer, who handled data pipeline and
-experiments, project coordination, etc.]*
+- **Saad Seif el islam Namoune** — Technical lead: designed and implemented
+  the federated learning core (FedAvg + DP-SGD), the NVIDIA FLARE and
+  MONAI integration, the platform layer (authentication, database, web
+  dashboards), and ran the real training experiments that produced the
+  project's results.
+- **Yasmine Haous** — Research and project coordination: contributed to
+  problem framing and solution research, dataset and requirements
+  analysis, and coordination with the program mentor and administrative
+  process (progress reporting, submission preparation).
 
 ---
 
