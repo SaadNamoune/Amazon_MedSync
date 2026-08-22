@@ -21,6 +21,7 @@ from medsync.models.chexnet import build_chexnet  # noqa: E402
 from medsync.federation.client import LocalClient  # noqa: E402
 from medsync.federation.fedavg import federated_average  # noqa: E402
 from medsync.federation.evaluate import evaluate_model  # noqa: E402
+from medsync.federation.privacy_accounting import CumulativePrivacyTracker  # noqa: E402
 
 
 def main():
@@ -60,6 +61,7 @@ def main():
     global_eval_ds = torch.utils.data.ConcatDataset(held_out_datasets)
 
     global_model = build_chexnet(pretrained=True)
+    privacy_trackers = {c.node_id: CumulativePrivacyTracker(target_delta=args.target_delta) for c in clients}
 
     with mlflow.start_run():
         mlflow.log_params(vars(args))
@@ -70,13 +72,13 @@ def main():
 
             for client in clients:
                 local_model = copy.deepcopy(global_model)
-                state_dict, n_samples, epsilon, avg_loss = client.train_round(
-                    local_model, local_epochs=args.local_epochs
-                )
+                state_dict, n_samples, epsilon, avg_loss, noise_multiplier, sample_rate, n_batches = \
+                    client.train_round(local_model, local_epochs=args.local_epochs)
                 state_dicts.append(state_dict)
                 weights.append(n_samples)
                 epsilons.append(epsilon)
                 losses.append(avg_loss)
+                privacy_trackers[client.node_id].record_round(noise_multiplier, sample_rate, n_batches)
                 print(f"  node_{client.node_id}: loss={avg_loss:.4f} "
                       f"epsilon={epsilon:.3f} n={n_samples}")
 
@@ -88,14 +90,17 @@ def main():
             )
             max_epsilon = max(epsilons)
             avg_client_loss = sum(losses) / len(losses)
+            cumulative_max_epsilon = max(t.cumulative_epsilon() for t in privacy_trackers.values())
 
             print(f"  -> global macro AUC={macro_auc:.4f} "
-                  f"max_client_epsilon={max_epsilon:.3f}")
+                  f"max_client_epsilon={max_epsilon:.3f} "
+                  f"cumulative_max_epsilon={cumulative_max_epsilon:.3f}")
 
             mlflow.log_metrics({
                 "macro_auc": macro_auc,
                 "avg_client_loss": avg_client_loss,
                 "max_client_epsilon": max_epsilon,
+                "cumulative_max_epsilon": cumulative_max_epsilon,
             }, step=round_idx)
 
         ckpt_path = Path("global_model_final.pth")

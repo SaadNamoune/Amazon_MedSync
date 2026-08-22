@@ -16,7 +16,7 @@ from mlflow.tracking import MlflowClient
 router = APIRouter(prefix="/api")
 
 PARTITIONS_DIR = Path("data/partitions")
-METRIC_KEYS = ["macro_auc", "avg_client_loss", "max_client_epsilon"]
+METRIC_KEYS = ["macro_auc", "avg_client_loss", "max_client_epsilon", "cumulative_max_epsilon"]
 
 
 def _json_safe(value):

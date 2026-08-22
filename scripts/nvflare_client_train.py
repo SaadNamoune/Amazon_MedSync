@@ -23,6 +23,7 @@ import nvflare.client as flare  # noqa: E402
 from medsync.data.dataset import split_train_val  # noqa: E402
 from medsync.federation.client import LocalClient  # noqa: E402
 from medsync.federation.evaluate import evaluate_model  # noqa: E402
+from medsync.federation.privacy_accounting import CumulativePrivacyTracker  # noqa: E402
 from medsync.models.chexnet import build_chexnet  # noqa: E402
 
 
@@ -58,22 +59,33 @@ def main():
     )
     print(f"[{site_name} -> node_{node_idx}] {len(train_ds)} train / {len(val_ds)} held-out images")
 
+    privacy_tracker = CumulativePrivacyTracker(target_delta=args.target_delta)
+
     while flare.is_running():
         input_model = flare.receive()
 
         model = build_chexnet(pretrained=False)
         model.load_state_dict(input_model.params)
 
-        state_dict, n_samples, epsilon, avg_loss = client.train_round(model, local_epochs=args.local_epochs)
+        state_dict, n_samples, epsilon, avg_loss, noise_multiplier, sample_rate, n_batches = \
+            client.train_round(model, local_epochs=args.local_epochs)
+        privacy_tracker.record_round(noise_multiplier, sample_rate, n_batches)
+        cumulative_epsilon = privacy_tracker.cumulative_epsilon()
 
         model.load_state_dict(state_dict)
         local_auc, _ = evaluate_model(model, val_ds, device=device)
         print(f"[{site_name}] round {input_model.current_round}: "
-              f"loss={avg_loss:.4f} epsilon={epsilon:.3f} local_auc={local_auc:.4f}")
+              f"loss={avg_loss:.4f} epsilon={epsilon:.3f} "
+              f"cumulative_epsilon={cumulative_epsilon:.3f} local_auc={local_auc:.4f}")
 
         output_model = flare.FLModel(
             params=state_dict,
-            metrics={"loss": avg_loss, "epsilon": epsilon, "local_auc": local_auc},
+            metrics={
+                "loss": avg_loss,
+                "epsilon": epsilon,
+                "cumulative_epsilon": cumulative_epsilon,
+                "local_auc": local_auc,
+            },
         )
         flare.send(output_model)
 

@@ -6,16 +6,41 @@
 <title>MedSync Federation Monitor</title>
 <link rel="stylesheet" href="/static/style.css">
 <style>
-  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-top: 14px; }
-  .chart-card { border: 1px solid var(--border); border-radius: 8px; padding: 14px; background: var(--surface); }
-  .chart-card h3 { margin: 0 0 8px; font-size: 0.85rem; color: var(--text-muted); font-weight: 600; }
-  svg { width: 100%; height: 140px; overflow: visible; }
-  .line { fill: none; stroke: var(--primary); stroke-width: 2; }
-  .dot { fill: var(--primary); }
+  .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; margin-top: 16px; }
+  @media (max-width: 620px) { .charts { grid-template-columns: 1fr; } }
+  .chart-card {
+    border: 1px solid var(--border); border-radius: 14px; padding: 16px;
+    background: var(--surface-solid); box-shadow: var(--shadow-sm);
+    opacity: 0; animation: fadeInUp .5s var(--ease) forwards;
+    transition: box-shadow .3s var(--ease), transform .3s var(--ease);
+  }
+  .chart-card:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+  .chart-card h3 { margin: 0 0 4px; font-size: 0.82rem; color: var(--text-muted); font-weight: 700; }
+  .chart-card .stat { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
+  svg.trend { width: 100%; height: 110px; overflow: visible; margin-top: 4px; }
+  .line { fill: none; stroke: url(#lineGrad); stroke-width: 2.5; stroke-linecap: round; }
+  .area { fill: url(#areaGrad); opacity: .5; }
+  .dot { fill: var(--primary); stroke: var(--surface-solid); stroke-width: 1.5; }
   .axis-label { font-size: 9px; fill: var(--text-muted); }
-  .threshold { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 4 3; }
-  #experiment-picker { font-size: 0.85rem; padding: 4px 10px; border-radius: 6px; width: auto; float: right; display: none; }
-  .hidden { display: none; }
+  .threshold { stroke: var(--danger); stroke-width: 1; stroke-dasharray: 4 3; opacity: .7; }
+
+  #experiment-picker { font-size: 0.82rem; padding: 6px 12px; border-radius: 999px; width: auto; float: right; display: none; }
+
+  .node-row {
+    display: flex; align-items: center; gap: 12px; padding: 12px 4px;
+    border-bottom: 1px solid var(--border);
+    opacity: 0; animation: fadeInUp .4s var(--ease) forwards;
+  }
+  .node-row:last-child { border-bottom: none; }
+  .node-dot {
+    width: 34px; height: 34px; border-radius: 10px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    color: #fff; font-weight: 800; font-size: 0.82rem;
+  }
+  .node-name { font-weight: 700; font-size: 0.9rem; }
+  .node-count { color: var(--text-muted); font-size: 0.8rem; }
+  .node-findings { font-size: 0.82rem; color: var(--text-muted); margin-top: 2px; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -42,15 +67,14 @@
 
     <section id="nodes-section" class="card">
       <h2>Hospital nodes</h2>
-      <table id="nodes-table" class="hidden">
-        <thead><tr><th>Node</th><th>Images</th><th>Top findings</th></tr></thead>
-        <tbody id="nodes-body"></tbody>
-      </table>
+      <div id="nodes-list"></div>
       <div id="nodes-empty" class="empty"></div>
     </section>
   </div>
 
 <script>
+const NODE_COLORS = ['#6366f1', '#8b5cf6', '#06b6d4', '#10b981', '#f59e0b', '#e11d48'];
+
 async function loadExperimentList() {
   const picker = document.getElementById('experiment-picker');
   try {
@@ -84,36 +108,56 @@ async function loadTrainingHistory(experiment) {
       <span class="badge">${data.params.num_nodes} nodes</span>
       <span class="badge">target ε ≤ ${data.params.target_epsilon}</span>
     `;
-    renderChart(container, 'Global macro AUC', data.rounds, 'macro_auc', 0, 1, 0.5);
-    renderChart(container, 'Avg client training loss', data.rounds, 'avg_client_loss', 0, null, null);
-    renderChart(container, 'Max client ε (privacy spent)', data.rounds, 'max_client_epsilon', 0, null,
-                Number(data.params.target_epsilon));
+    renderChart(container, 'Global macro AUC', data.rounds, 'macro_auc', 0, 1, 0.5, 0, v => v.toFixed(3));
+    renderChart(container, 'Avg client training loss', data.rounds, 'avg_client_loss', 0, null, null, 1, v => v.toFixed(3));
+    renderChart(container, 'Max client ε (this round only)', data.rounds, 'max_client_epsilon', 0, null,
+                Number(data.params.target_epsilon), 2, v => v.toFixed(3));
+    renderChart(container, 'Max client ε (cumulative, all rounds)', data.rounds, 'cumulative_max_epsilon',
+                0, null, null, 3, v => v.toFixed(3));
   } catch (e) {
     meta.innerHTML = `<span class="err">${e.message}</span> — run <code>scripts/run_federation.py</code> or <code>scripts/run_nvflare_job.py</code> to produce training history.`;
   }
 }
 
-function renderChart(container, title, rounds, key, yMin, yMax, thresholdY) {
+function renderChart(container, title, rounds, key, yMin, yMax, thresholdY, delayIdx, fmt) {
   const card = document.createElement('div');
   card.className = 'chart-card';
+  card.style.animationDelay = `${delayIdx * 80}ms`;
+
+  const values = rounds.map(r => r[key]).filter(v => v !== null && v !== undefined);
   const h3 = document.createElement('h3');
   h3.textContent = title;
   card.appendChild(h3);
 
-  const values = rounds.map(r => r[key]).filter(v => v !== null && v !== undefined);
   if (!values.length) {
     card.innerHTML += '<div class="empty">No data</div>';
     container.appendChild(card);
     return;
   }
 
-  const w = 380, h = 130, pad = 24;
-  const lo = yMin !== null ? yMin : Math.min(...values);
-  const hi = yMax !== null ? yMax : Math.max(...values) * 1.1;
+  const latest = values[values.length - 1];
+  const stat = document.createElement('div');
+  stat.className = 'stat';
+  stat.textContent = fmt(latest);
+  card.appendChild(stat);
+
+  const w = 380, h = 100, pad = 20;
+  // Auto-scaled range must include the threshold line's own value too --
+  // otherwise a threshold far outside the data range (e.g. target ε=1.0
+  // when every actual round stayed near 0.4) computes a y-position outside
+  // the chart's own box entirely, rendering the line on top of unrelated
+  // content above the SVG instead of clipping or scaling to fit.
+  const rangeValues = (thresholdY !== null && thresholdY !== undefined) ? [...values, thresholdY] : values;
+  const lo = yMin !== null ? yMin : Math.min(...rangeValues);
+  const hi = yMax !== null ? yMax : Math.max(...rangeValues) * 1.1;
   const xStep = (w - pad * 2) / Math.max(rounds.length - 1, 1);
-  const yScale = v => h - pad - ((v - lo) / (hi - lo || 1)) * (h - pad * 2);
+  const yScale = v => {
+    const y = h - pad - ((v - lo) / (hi - lo || 1)) * (h - pad * 2);
+    return Math.min(Math.max(y, 0), h); // clamp defensively, never bleed outside the viewBox
+  };
 
   const points = rounds.map((r, i) => `${pad + i * xStep},${yScale(r[key])}`).join(' ');
+  const areaPoints = `${pad},${h - pad} ${points} ${pad + (rounds.length - 1) * xStep},${h - pad}`;
 
   let extra = '';
   if (thresholdY !== null && thresholdY !== undefined) {
@@ -122,24 +166,38 @@ function renderChart(container, title, rounds, key, yMin, yMax, thresholdY) {
   }
 
   const dots = rounds.map((r, i) =>
-    `<circle class="dot" cx="${pad + i * xStep}" cy="${yScale(r[key])}" r="2.5" />`
+    `<circle class="dot" cx="${pad + i * xStep}" cy="${yScale(r[key])}" r="3" style="opacity:0;animation:fadeIn .3s ${((delayIdx * 80) + 500 + i * 40)}ms both" />`
   ).join('');
 
+  const gradId = `lineGrad-${delayIdx}`, areaId = `areaGrad-${delayIdx}`;
   card.innerHTML += `
-    <svg viewBox="0 0 ${w} ${h}">
+    <svg class="trend" viewBox="0 0 ${w} ${h}">
+      <defs>
+        <linearGradient id="${gradId}" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stop-color="var(--primary)"/>
+          <stop offset="100%" stop-color="var(--primary-3)"/>
+        </linearGradient>
+        <linearGradient id="${areaId}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stop-color="var(--primary)" stop-opacity="0.28"/>
+          <stop offset="100%" stop-color="var(--primary)" stop-opacity="0"/>
+        </linearGradient>
+      </defs>
       ${extra}
-      <polyline class="line" points="${points}" />
+      <polygon points="${areaPoints}" fill="url(#${areaId})" style="opacity:0;animation:fadeIn .6s ${(delayIdx * 80) + 300}ms both"/>
+      <polyline points="${points}" fill="none" stroke="url(#${gradId})" stroke-width="2.5" stroke-linecap="round"
+                pathLength="1" style="stroke-dasharray:1;stroke-dashoffset:1;animation:draw 1s ${var_ease()} ${delayIdx * 80}ms forwards"/>
       ${dots}
-      <text class="axis-label" x="${pad}" y="${h - 4}">round 1</text>
-      <text class="axis-label" x="${w - pad - 40}" y="${h - 4}">round ${rounds.length}</text>
+      <text class="axis-label" x="${pad}" y="${h - 2}">round 1</text>
+      <text class="axis-label" x="${w - pad - 42}" y="${h - 2}">round ${rounds.length}</text>
     </svg>
   `;
   container.appendChild(card);
 }
 
+function var_ease() { return 'cubic-bezier(0.16,1,0.3,1)'; }
+
 async function loadNodes() {
-  const table = document.getElementById('nodes-table');
-  const body = document.getElementById('nodes-body');
+  const list = document.getElementById('nodes-list');
   const empty = document.getElementById('nodes-empty');
   try {
     const resp = await fetch('/api/nodes');
@@ -148,13 +206,21 @@ async function loadNodes() {
       empty.textContent = 'No partitioned data yet — run scripts/partition_data.py.';
       return;
     }
-    for (const node of nodes) {
-      const tr = document.createElement('tr');
+    nodes.forEach((node, i) => {
+      const row = document.createElement('div');
+      row.className = 'node-row';
+      row.style.animationDelay = `${i * 60}ms`;
+      const color = NODE_COLORS[i % NODE_COLORS.length];
       const findings = node.top_labels.map(l => `${l.label.replaceAll('_', ' ')} (${l.count})`).join(', ');
-      tr.innerHTML = `<td>${node.node_id}</td><td>${node.num_images}</td><td>${findings}</td>`;
-      body.appendChild(tr);
-    }
-    table.classList.remove('hidden');
+      row.innerHTML = `
+        <div class="node-dot" style="background:${color}">${node.node_id.replace('node_', '#')}</div>
+        <div>
+          <div class="node-name">${node.node_id} <span class="node-count">— ${node.num_images.toLocaleString()} images</span></div>
+          <div class="node-findings">${findings}</div>
+        </div>
+      `;
+      list.appendChild(row);
+    });
   } catch (e) {
     empty.textContent = 'Could not load node status.';
   }
@@ -164,5 +230,9 @@ loadExperimentList();
 loadTrainingHistory();
 loadNodes();
 </script>
+
+<style>
+@keyframes draw { to { stroke-dashoffset: 0; } }
+</style>
 </body>
 </html>

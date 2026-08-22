@@ -116,16 +116,20 @@ class MedSyncFedAvg(FedAvg):
 
                 losses = [r.metrics.get("loss", 0.0) for r in results if r.metrics]
                 epsilons = [r.metrics.get("epsilon", 0.0) for r in results if r.metrics]
+                cumulative_epsilons = [r.metrics.get("cumulative_epsilon", 0.0) for r in results if r.metrics]
                 avg_client_loss = sum(losses) / len(losses) if losses else float("nan")
                 max_client_epsilon = max(epsilons) if epsilons else float("nan")
+                cumulative_max_epsilon = max(cumulative_epsilons) if cumulative_epsilons else float("nan")
 
                 self.info(f"Round {self.current_round}: global_macro_auc={macro_auc:.4f} "
-                          f"avg_client_loss={avg_client_loss:.4f} max_client_epsilon={max_client_epsilon:.3f}")
+                          f"avg_client_loss={avg_client_loss:.4f} max_client_epsilon={max_client_epsilon:.3f} "
+                          f"cumulative_max_epsilon={cumulative_max_epsilon:.3f}")
 
                 mlflow.log_metrics({
                     "macro_auc": macro_auc,
                     "avg_client_loss": avg_client_loss,
                     "max_client_epsilon": max_client_epsilon,
+                    "cumulative_max_epsilon": cumulative_max_epsilon,
                 }, step=self.current_round)
 
             torch.save(model.params, self.checkpoint_path)

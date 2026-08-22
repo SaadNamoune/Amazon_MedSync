@@ -6,13 +6,52 @@
 <title>MedSync Diagnostic Dashboard</title>
 <link rel="stylesheet" href="/static/style.css">
 <style>
-  #drop { border: 2px dashed var(--border); border-radius: 10px; padding: 36px; text-align: center; cursor: pointer; transition: border-color .15s, background .15s; }
-  #drop.drag { border-color: var(--primary); background: var(--primary-bg); }
-  #drop span { color: var(--text-muted); font-size: 0.95rem; }
-  #preview { max-width: 100%; margin-top: 16px; border-radius: 10px; display: none; }
-  .bar { background: var(--primary); height: 8px; border-radius: 4px; }
-  .barbg { background: var(--border); border-radius: 4px; width: 100%; }
-  .hidden { display: none; }
+  #drop {
+    border: 2px dashed var(--border);
+    border-radius: 14px;
+    padding: 40px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color .25s var(--ease), background .25s var(--ease), transform .25s var(--ease);
+  }
+  #drop:hover { border-color: var(--primary); transform: translateY(-1px); }
+  #drop.drag { border-color: var(--primary); background: var(--primary-bg); transform: scale(1.01); }
+  #drop-icon {
+    width: 44px; height: 44px; margin: 0 auto 12px;
+    border-radius: 12px;
+    background: linear-gradient(135deg, var(--primary), var(--primary-2));
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 6px 18px -4px rgba(99, 102, 241, 0.45);
+  }
+  #drop-icon svg { width: 22px; height: 22px; }
+  #drop .hint { color: var(--text-muted); font-size: 0.9rem; margin-top: 4px; }
+  #drop .title { font-weight: 700; font-size: 0.98rem; }
+
+  .result-layout { display: grid; grid-template-columns: 200px 1fr; gap: 24px; align-items: start; }
+  @media (max-width: 620px) { .result-layout { grid-template-columns: 1fr; } }
+  #preview-wrap { display: none; }
+  #preview { width: 100%; border-radius: 12px; box-shadow: var(--shadow-md); animation: popIn .4s var(--ease) both; }
+
+  .finding-row {
+    display: grid; grid-template-columns: 1fr auto; align-items: center;
+    gap: 10px; padding: 10px 0; border-bottom: 1px solid var(--border);
+    opacity: 0; animation: fadeInUp .45s var(--ease) forwards;
+  }
+  .finding-row:last-child { border-bottom: none; }
+  .finding-name { font-weight: 600; font-size: 0.92rem; }
+  .finding-pct { font-weight: 800; font-size: 0.92rem; min-width: 44px; text-align: right; }
+  .finding-bar-bg { grid-column: 1 / -1; height: 7px; border-radius: 99px; background: var(--border); overflow: hidden; }
+  .finding-bar-fill {
+    height: 100%; border-radius: 99px; width: 0;
+    background: linear-gradient(90deg, var(--primary), var(--primary-2));
+    transition: width 1s var(--ease);
+  }
+  .finding-bar-fill.high { background: linear-gradient(90deg, #f59e0b, var(--danger)); }
+
+  #loading-row { display: none; align-items: center; gap: 10px; color: var(--text-muted); font-size: 0.92rem; padding: 14px 0; }
+  #loading-row .spinner { border-top-color: var(--primary); border-color: rgba(99, 102, 241, .25); }
+  #result-area { margin-top: 22px; }
+  .hidden { display: none !important; }
 </style>
 </head>
 <body>
@@ -32,15 +71,29 @@
     <div class="card">
       <div id="drop">
         <input type="file" id="file" accept="image/png,image/jpeg" class="hidden">
-        <span>Click or drop a JPEG/PNG chest X-ray here</span>
+        <div id="drop-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 16V4M12 4l-4 4M12 4l4 4"/>
+            <path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+          </svg>
+        </div>
+        <div class="title">Click or drop a chest X-ray here</div>
+        <div class="hint">JPEG or PNG</div>
       </div>
-      <img id="preview">
-      <div id="err"></div>
-      <table id="results" class="hidden">
-        <thead><tr><th>Finding</th><th>Probability</th><th></th></tr></thead>
-        <tbody id="results-body"></tbody>
-      </table>
-      <div id="meta"></div>
+
+      <div id="err" class="err"></div>
+
+      <div id="loading-row"><span class="spinner"></span> Running inference…</div>
+
+      <div id="result-area" class="hidden">
+        <div class="result-layout">
+          <div id="preview-wrap"><img id="preview"></div>
+          <div>
+            <div id="results-body"></div>
+            <div id="meta" class="meta"></div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -59,8 +112,10 @@ document.getElementById('logout-link').addEventListener('click', (e) => {
 const drop = document.getElementById('drop');
 const fileInput = document.getElementById('file');
 const preview = document.getElementById('preview');
+const previewWrap = document.getElementById('preview-wrap');
 const err = document.getElementById('err');
-const resultsTable = document.getElementById('results');
+const loadingRow = document.getElementById('loading-row');
+const resultArea = document.getElementById('result-area');
 const resultsBody = document.getElementById('results-body');
 const meta = document.getElementById('meta');
 
@@ -78,11 +133,12 @@ fileInput.addEventListener('change', () => {
 
 async function handleFile(file) {
   err.textContent = '';
-  resultsTable.classList.add('hidden');
+  resultArea.classList.add('hidden');
   meta.textContent = '';
+  loadingRow.style.display = 'flex';
 
+  previewWrap.style.display = 'block';
   preview.src = URL.createObjectURL(file);
-  preview.style.display = 'block';
 
   const formData = new FormData();
   formData.append('file', file);
@@ -106,23 +162,38 @@ async function handleFile(file) {
     renderResults(data);
   } catch (e) {
     err.textContent = e.message;
+  } finally {
+    loadingRow.style.display = 'none';
   }
 }
 
 function renderResults(data) {
   resultsBody.innerHTML = '';
+  let i = 0;
   for (const [label, prob] of Object.entries(data.findings)) {
-    const tr = document.createElement('tr');
     const pct = Math.round(prob * 100);
-    tr.innerHTML = `
-      <td>${label.replaceAll('_', ' ')}</td>
-      <td>${pct}%</td>
-      <td><div class="barbg"><div class="bar" style="width:${pct}%"></div></div></td>
+    const row = document.createElement('div');
+    row.className = 'finding-row';
+    row.style.animationDelay = `${i * 45}ms`;
+    row.innerHTML = `
+      <span class="finding-name">${label.replaceAll('_', ' ')}</span>
+      <span class="finding-pct">${pct}%</span>
+      <div class="finding-bar-bg"><div class="finding-bar-fill ${pct >= 50 ? 'high' : ''}"></div></div>
     `;
-    resultsBody.appendChild(tr);
+    resultsBody.appendChild(row);
+    i++;
   }
-  resultsTable.classList.remove('hidden');
+  resultArea.classList.remove('hidden');
   meta.textContent = `Inference time: ${data.inference_ms} ms`;
+
+  // Animate bar fills after layout, and stagger via requestAnimationFrame
+  // so the width transition actually plays instead of jumping straight in.
+  requestAnimationFrame(() => {
+    resultsBody.querySelectorAll('.finding-bar-fill').forEach((el, idx) => {
+      const pct = el.parentElement.previousElementSibling.textContent;
+      setTimeout(() => { el.style.width = pct; }, idx * 45);
+    });
+  });
 }
 </script>
 </body>

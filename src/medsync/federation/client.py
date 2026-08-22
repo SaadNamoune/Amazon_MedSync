@@ -78,4 +78,8 @@ class LocalClient:
             (k, v.detach().cpu().clone()) for k, v in raw_state.items()
         )
         avg_loss = total_loss / max(n_batches, 1)
-        return state_dict, len(self.dataset), epsilon, avg_loss
+        # noise_multiplier/sample_rate/n_batches let the caller track *cumulative*
+        # privacy spend across rounds (see privacy_accounting.py) -- this round's
+        # `epsilon` above only answers "how much did this one round cost in
+        # isolation", not "how much has this node spent in total so far".
+        return state_dict, len(self.dataset), epsilon, avg_loss, noise_multiplier, sample_rate, n_batches
